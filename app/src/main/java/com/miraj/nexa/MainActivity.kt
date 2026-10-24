@@ -86,9 +86,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         addMessage("Nexa", answer, false)
     }
 
-    private fun addMessage(who: String, text: String, user: Boolean) {
+    private fun addMessage(who: String, messageText: String, user: Boolean) {
         val bubble = TextView(this).apply {
-            this.text = "$who\n$text"
+            this.text = "$who\n$messageText"
             textSize = 15f; setTextColor(white)
             setPadding(dp(13), dp(11), dp(13), dp(11))
             setBackgroundColor(if (user) Color.rgb(31, 75, 120) else panel)
@@ -103,7 +103,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         if (!user) {
             val speak = TextView(this).apply {
                 text = "▶ উত্তর শুনুন"; setTextColor(muted); setPadding(dp(5), dp(4), 0, dp(8))
-                setOnClickListener { tts?.speak(text.substringAfter("\n"), TextToSpeech.QUEUE_FLUSH, null, "nexa") }
+                setOnClickListener { tts?.speak(messageText, TextToSpeech.QUEUE_FLUSH, null, "nexa") }
             }
             messages.addView(speak)
         }
