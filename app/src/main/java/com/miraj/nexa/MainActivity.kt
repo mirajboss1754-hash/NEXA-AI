@@ -122,7 +122,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         r.addView(btn("Open browser / search"){startActivity(Intent(Intent.ACTION_VIEW,android.net.Uri.parse("https://www.google.com")))},LinearLayout.LayoutParams(-1,dp(50)))
         r.addView(btn("Open phone settings"){startActivity(Intent(android.provider.Settings.ACTION_SETTINGS))},LinearLayout.LayoutParams(-1,dp(50)))
         r.addView(btn("Set an alarm"){try{startActivity(Intent(android.provider.AlarmClock.ACTION_SET_ALARM).putExtra(android.provider.AlarmClock.EXTRA_MESSAGE,"Nexa reminder").putExtra(android.provider.AlarmClock.EXTRA_HOUR,7).putExtra(android.provider.AlarmClock.EXTRA_MINUTES,0))}catch(_:Exception){Toast.makeText(this,"Clock app পাওয়া যায়নি",Toast.LENGTH_SHORT).show()}},LinearLayout.LayoutParams(-1,dp(50)))
-        r.addView(btn("AI connection info"){AlertDialog.Builder(this).setTitle("AI connection").setMessage("AI উত্তর চালু করতে একটি secure backend/API endpoint configure করতে হবে। API secret সরাসরি APK-তে রাখা নিরাপদ নয়। এই build-এ online AI এখনো সক্রিয় নয়।").setPositiveButton("OK",null).show()},LinearLayout.LayoutParams(-1,dp(50)))
+        r.addView(btn("AI connection info"){ configureAIEndpoint() },LinearLayout.LayoutParams(-1,dp(50)))
         setContentView(r)
     }
     private fun send() {
@@ -135,8 +135,70 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             low.contains("alarm") || low.contains("অ্যালার্ম") -> { try{startActivity(Intent(android.provider.AlarmClock.ACTION_SET_ALARM))}catch(_:Exception){}; addMessage("Nexa","Clock app-এ alarm সেট করো।",false) }
             low.contains("কেমন আছ") || low.contains("how are you") -> addMessage("Nexa","আমি ভালো আছি! 😊 তুমি কেমন আছো? মনে রেখো, এই build-এ এখনো online AI যুক্ত হয়নি।",false)
             low.contains("নাম") || low.contains("name") -> addMessage("Nexa","আমার নাম Nexa।",false)
-            else -> addMessage("Nexa","তোমার কথা বুঝেছি: “$q”। এই build-এ voice input, কিছু phone actions ও reminder আছে; বুদ্ধিমান AI উত্তর চালু করতে secure AI server সংযোগ এখনও লাগবে।",false)
+            else -> {
+                val endpoint = prefs.getString("ai_endpoint", "")?.trim().orEmpty()
+                if (endpoint.isNotBlank()) askOnlineAI(endpoint, q)
+                else addMessage("Nexa","অনলাইন AI চালু করতে Phone tools → AI connection info থেকে তোমার deployed Worker URL সেট করো।",false)
+            }
         }
+    }
+    private fun askOnlineAI(endpoint: String, question: String) {
+        addMessage("Nexa","একটু অপেক্ষা করো, উত্তর খুঁজছি…",false)
+        thread {
+            var answer: String? = null
+            var error: String? = null
+            var connection: HttpURLConnection? = null
+            try {
+                val baseUrl = endpoint.trim().removeSuffix("/")
+                val url = URL(if (baseUrl.endsWith("/chat")) baseUrl else "$baseUrl/chat")
+                connection = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 15000
+                    readTimeout = 30000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                }
+                val payload = JSONObject().put("message", question).toString()
+                connection.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+                val code = connection.responseCode
+                val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+                val response = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+                val obj = JSONObject(response)
+                if (code in 200..299) answer = obj.optString("reply").takeIf { it.isNotBlank() }
+                else error = obj.optString("error").ifBlank { "Server error ($code)" }
+            } catch (_: Exception) {
+                error = "সার্ভারে সংযোগ হচ্ছে না। Worker URL এবং internet connection পরীক্ষা করো।"
+            } finally { connection?.disconnect() }
+            runOnUiThread {
+                if (!answer.isNullOrBlank()) addMessage("Nexa", answer!!, false)
+                else addMessage("Nexa", "AI উত্তর পাওয়া যায়নি: ${error ?: "অজানা সমস্যা"}", false)
+            }
+        }
+    }
+    private fun configureAIEndpoint() {
+        val field = EditText(this).apply {
+            hint = "https://your-worker.workers.dev"
+            setText(prefs.getString("ai_endpoint", "") ?: "")
+            setSingleLine(true)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Nexa AI server URL")
+            .setMessage("Cloudflare Worker deploy করার পর পাওয়া URL দাও। /chat লিখতে হবে না; URL ফোনে সেভ হবে। API key এখানে দেবে না।")
+            .setView(field)
+            .setPositiveButton("Save") { _, _ ->
+                val value = field.text.toString().trim().removeSuffix("/")
+                if (value.isBlank()) {
+                    prefs.edit().remove("ai_endpoint").apply()
+                    Toast.makeText(this, "AI server URL মুছে ফেলা হয়েছে", Toast.LENGTH_SHORT).show()
+                } else if (!value.startsWith("https://")) {
+                    Toast.makeText(this, "HTTPS URL দিতে হবে", Toast.LENGTH_LONG).show()
+                } else {
+                    prefs.edit().putString("ai_endpoint", value).apply()
+                    Toast.makeText(this, "AI server URL সেভ হয়েছে", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
     private fun addMessage(who:String, textMsg:String, user:Boolean) {
         val bubble=TextView(this).apply { text="$who\n$textMsg"; textSize=15f; setTextColor(white); setPadding(dp(13),dp(11),dp(13),dp(11)); setBackgroundColor(if(user) Color.rgb(31,75,120) else panel) }
